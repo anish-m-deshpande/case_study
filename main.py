@@ -1,4 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 import models, schemas, database
@@ -15,6 +17,23 @@ import asyncio
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Northwind Logistics Expense Review")
+
+# Serve static files (frontend) from the static directory
+# We use a catch-all route to handle React Router if needed, 
+# but for this app, serving index.html at root is enough.
+app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+
+@app.get("/")
+async def serve_frontend():
+    return FileResponse("static/index.html")
+
+@app.get("/{full_path:path}")
+async def catch_all(full_path: str):
+    # If the file exists in static, serve it, otherwise serve index.html
+    file_path = os.path.join("static", full_path)
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    return FileResponse("static/index.html")
 
 @app.get("/employees", response_model=List[schemas.Employee])
 def get_employees(db: Session = Depends(get_db)):
