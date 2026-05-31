@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -18,28 +18,14 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Northwind Logistics Expense Review")
 
-# Serve static files (frontend) from the static directory
-# We use a catch-all route to handle React Router if needed, 
-# but for this app, serving index.html at root is enough.
-app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+# Create an API router to prefix all backend routes with /api
+api_router = APIRouter(prefix="/api")
 
-@app.get("/")
-async def serve_frontend():
-    return FileResponse("static/index.html")
-
-@app.get("/{full_path:path}")
-async def catch_all(full_path: str):
-    # If the file exists in static, serve it, otherwise serve index.html
-    file_path = os.path.join("static", full_path)
-    if os.path.isfile(file_path):
-        return FileResponse(file_path)
-    return FileResponse("static/index.html")
-
-@app.get("/employees", response_model=List[schemas.Employee])
+@api_router.get("/employees", response_model=List[schemas.Employee])
 def get_employees(db: Session = Depends(get_db)):
     return db.query(models.Employee).all()
 
-@app.post("/employees", response_model=schemas.Employee)
+@api_router.post("/employees", response_model=schemas.Employee)
 def create_employee(employee: schemas.EmployeeBase, db: Session = Depends(get_db)):
     db_employee = models.Employee(**employee.dict())
     db.add(db_employee)
@@ -47,7 +33,7 @@ def create_employee(employee: schemas.EmployeeBase, db: Session = Depends(get_db
     db.refresh(db_employee)
     return db_employee
 
-@app.post("/submissions", response_model=schemas.Submission)
+@api_router.post("/submissions", response_model=schemas.Submission)
 async def create_submission(
     employee_id: str = Form(...),
     trip_purpose: str = Form(...),
@@ -148,18 +134,18 @@ async def create_submission(
     db.refresh(db_submission)
     return db_submission
 
-@app.get("/submissions", response_model=List[schemas.Submission])
+@api_router.get("/submissions", response_model=List[schemas.Submission])
 def list_submissions(db: Session = Depends(get_db)):
     return db.query(models.Submission).order_by(models.Submission.created_at.desc()).all()
 
-@app.get("/submissions/{submission_id}", response_model=schemas.Submission)
+@api_router.get("/submissions/{submission_id}", response_model=schemas.Submission)
 def get_submission(submission_id: int, db: Session = Depends(get_db)):
     submission = db.query(models.Submission).filter(models.Submission.id == submission_id).first()
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
     return submission
 
-@app.delete("/submissions/{submission_id}")
+@api_router.delete("/submissions/{submission_id}")
 def delete_submission(submission_id: int, db: Session = Depends(get_db)):
     submission = db.query(models.Submission).filter(models.Submission.id == submission_id).first()
     if not submission:
@@ -170,7 +156,7 @@ def delete_submission(submission_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
-@app.post("/line_items/{line_item_id}/override")
+@api_router.post("/line_items/{line_item_id}/override")
 def override_line_item(line_item_id: int, override: schemas.OverrideRequest, db: Session = Depends(get_db)):
     line_item = db.query(models.LineItem).filter(models.LineItem.id == line_item_id).first()
     if not line_item:
@@ -181,7 +167,7 @@ def override_line_item(line_item_id: int, override: schemas.OverrideRequest, db:
     db.commit()
     return {"status": "success"}
 
-@app.post("/policy/chat", response_model=schemas.PolicyAnswer)
+@api_router.post("/policy/chat", response_model=schemas.PolicyAnswer)
 async def policy_chat(question: schemas.PolicyQuestion):
     results = await asyncio.to_thread(policy_engine.query_policies, question.question, 5)
     context = "\n---\n".join(results['documents'][0])
@@ -217,6 +203,24 @@ async def policy_chat(question: schemas.PolicyQuestion):
         "answer": response.choices[0].message.content,
         "citations": citations
     }
+
+# Include the API router
+app.include_router(api_router)
+
+# Serve static files (frontend)
+if os.path.exists("static"):
+    app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+
+    @app.get("/")
+    async def serve_frontend():
+        return FileResponse("static/index.html")
+
+    @app.get("/{full_path:path}")
+    async def catch_all(full_path: str):
+        file_path = os.path.join("static", full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse("static/index.html")
 
 if __name__ == "__main__":
     import uvicorn
